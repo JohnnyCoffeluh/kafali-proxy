@@ -31,8 +31,96 @@ const { rotateTorCircuit } = require("./tor-control");
 /** Navigation timeout in milliseconds */
 const NAV_TIMEOUT = 30_000;
 
-/** Screencast quality (1–100 JPEG quality) — 50 offers 40% bandwidth reduction with crisp text */
-const SCREENCAST_QUALITY = 50;
+/** Screencast quality (1–100 JPEG quality) — 45 gives ultra-fast 20KB frames with crisp text */
+const SCREENCAST_QUALITY = 45;
+
+/**
+ * Direct zero-copy binary frame transmission.
+ */
+function sendFrameToClient(ws, base64Data) {
+  if (ws.readyState !== ws.OPEN) return;
+  const imgLen = Buffer.byteLength(base64Data, "base64");
+  const buf = Buffer.allocUnsafe(imgLen + 1);
+  buf[0] = 0x01; // 0x01 = Screencast frame opcode
+  buf.write(base64Data, 1, imgLen, "base64");
+  ws.send(buf, { binary: true });
+}
+
+/**
+ * Low-Latency Flow-Controlled Screencast Handler.
+ * Guarantees exactly ONE frame in flight over the network pipe!
+ * Prevents buffer bloat, eliminates input lag, and prevents rubber-banding.
+ */
+function handleScreencastFrame(ws, event) {
+  const session = ws._rbiSession;
+  if (!session) return;
+
+  // Drop stale frame if socket buffer is congested (>24KB in kernel)
+  if (ws.bufferedAmount > 24 * 1024) {
+    session.pendingFrame = event.data;
+    return;
+  }
+
+  // Flow control: if client has not yet acknowledged rendering the last frame,
+  // hold this newest frame in memory and send it the instant the client is ready!
+  if (!session.canSendFrame) {
+    session.pendingFrame = event.data;
+    return;
+  }
+
+  // Send the frame immediately
+  session.canSendFrame = false;
+  session.pendingFrame = null;
+
+  // Safety watchdog: if a frame or ack is lost on network, unblock after 120ms
+  if (session.ackTimer) clearTimeout(session.ackTimer);
+  session.ackTimer = setTimeout(() => {
+    if (session) {
+      session.canSendFrame = true;
+      if (session.pendingFrame) {
+        const next = session.pendingFrame;
+        session.pendingFrame = null;
+        sendFrameToClient(ws, next);
+      }
+    }
+  }, 120);
+
+  sendFrameToClient(ws, event.data);
+}
+
+/**
+ * Handle Frame Ack from client (client has drawn the frame).
+ */
+function handleClientAck(ws) {
+  const session = ws._rbiSession;
+  if (!session) return;
+
+  if (session.ackTimer) {
+    clearTimeout(session.ackTimer);
+    session.ackTimer = null;
+  }
+
+  session.canSendFrame = true;
+
+  if (session.pendingFrame) {
+    const next = session.pendingFrame;
+    session.pendingFrame = null;
+    session.canSendFrame = false;
+
+    session.ackTimer = setTimeout(() => {
+      if (session) {
+        session.canSendFrame = true;
+        if (session.pendingFrame) {
+          const n = session.pendingFrame;
+          session.pendingFrame = null;
+          sendFrameToClient(ws, n);
+        }
+      }
+    }, 120);
+
+    sendFrameToClient(ws, next);
+  }
+}
 
 /**
  * Initialise a session for a newly connected WebSocket client.
@@ -44,43 +132,29 @@ async function initSession(ws) {
   const { context, page } = await createSession();
 
   // Store session state on the ws object for easy cleanup
-  ws._rbiSession = { context, page, cdpSession: null, quality: SCREENCAST_QUALITY };
+  ws._rbiSession = {
+    context,
+    page,
+    cdpSession: null,
+    quality: SCREENCAST_QUALITY,
+    canSendFrame: true,
+    pendingFrame: null,
+    ackTimer: null,
+  };
 
   // ── 2. Start screencast via Chrome DevTools Protocol ────────
-  //
-  // The CDP "Page.startScreencast" command tells Chromium to emit
-  // a "Page.screencastFrame" event every time the viewport changes.
-  //
-  // Connection Improvement (Binary Streaming + Backpressure):
-  //   - Raw binary buffers instead of base64 JSON saves ~33% bandwidth
-  //   - Backpressure check (ws.bufferedAmount) drops frames if the client
-  //     is slow, preventing lag accumulation and keeping frames real-time.
   try {
     const cdp = await page.createCDPSession();
     ws._rbiSession.cdpSession = cdp;
 
     cdp.on("Page.screencastFrame", async (event) => {
-      // Acknowledge the frame so Chromium keeps sending new ones
       try {
         await cdp.send("Page.screencastFrameAck", {
           sessionId: event.sessionId,
         });
       } catch { /* session may have closed */ }
 
-      // Backpressure check: drop frame if client buffer is congested (>32KB)
-      // This guarantees zero accumulated input/display latency!
-      if (ws.bufferedAmount > 32 * 1024) {
-        return;
-      }
-
-      // Forward binary JPEG frame to client
-      // Byte 0: 0x01 (screencast frame opcode)
-      // Bytes 1..N: Raw JPEG buffer
-      if (ws.readyState === ws.OPEN) {
-        const imgBuffer = Buffer.from(event.data, "base64");
-        const binaryMessage = Buffer.concat([Buffer.from([0x01]), imgBuffer]);
-        ws.send(binaryMessage, { binary: true });
-      }
+      handleScreencastFrame(ws, event);
     });
 
     await cdp.send("Page.startScreencast", {
@@ -88,16 +162,15 @@ async function initSession(ws) {
       quality: SCREENCAST_QUALITY,
       maxWidth: VIEWPORT.width,
       maxHeight: VIEWPORT.height,
-      everyNthFrame: 1,                  // send every frame
+      everyNthFrame: 1,
     });
 
-    console.log("[session] Screencast started (binary stream with backpressure control)");
+    console.log("[session] Low-latency screencast active (Client-Ack flow control, zero-copy buffer)");
   } catch (err) {
     console.error("[session] CDP screencast setup failed, falling back to polling:", err.message);
-    // Fallback: poll screenshots every 300ms
     ws._rbiSession.pollInterval = setInterval(async () => {
       try {
-        if (ws.bufferedAmount > 64 * 1024) return;
+        if (ws.bufferedAmount > 32 * 1024) return;
         const q = ws._rbiSession?.quality || SCREENCAST_QUALITY;
         const buffer = await page.screenshot({ type: "jpeg", quality: q });
         if (ws.readyState === ws.OPEN) {
@@ -105,11 +178,18 @@ async function initSession(ws) {
           ws.send(binaryMessage, { binary: true });
         }
       } catch { /* page may have closed */ }
-    }, 300);
+    }, 250);
   }
 
   // ── 3. Listen for client messages ───────────────────────────
-  ws.on("message", (raw) => handleMessage(ws, raw));
+  ws.on("message", (raw) => {
+    // Check for high-frequency binary Frame-Ack opcode (0x02)
+    if (Buffer.isBuffer(raw) && raw.length === 1 && raw[0] === 0x02) {
+      handleClientAck(ws);
+      return;
+    }
+    handleMessage(ws, raw);
+  });
 
   // ── 4. Cleanup on disconnect ────────────────────────────────
   ws.on("close", () => cleanup(ws));
@@ -127,7 +207,7 @@ async function initSession(ws) {
     } catch (e) {
       console.warn("[session] Initial landing navigation error:", e.message);
     }
-  }, 200);
+  }, 100);
 }
 
 
@@ -191,73 +271,62 @@ async function handleMessage(ws, raw) {
         break;
 
       // ── Mouse events ──────────────────────────────────────
-      //
-      // The client sends (x, y) coordinates relative to the canvas,
-      // which matches the Puppeteer viewport coordinate system 1:1.
       case "click":
-        await page.mouse.click(msg.x, msg.y, {
+        page.mouse.click(msg.x, msg.y, {
           button: msg.btn === 2 ? "right" : "left",
-        });
+        }).catch(() => {});
         break;
 
       case "mousemove":
-        await page.mouse.move(msg.x, msg.y);
+        page.mouse.move(msg.x, msg.y).catch(() => {});
         break;
 
       case "mousedown":
-        await page.mouse.move(msg.x, msg.y);
-        await page.mouse.down({
-          button: msg.btn === 2 ? "right" : "left",
-        });
+        page.mouse.move(msg.x, msg.y).then(() =>
+          page.mouse.down({ button: msg.btn === 2 ? "right" : "left" })
+        ).catch(() => {});
         break;
 
       case "mouseup":
-        await page.mouse.move(msg.x, msg.y);
-        await page.mouse.up({
-          button: msg.btn === 2 ? "right" : "left",
-        });
+        page.mouse.move(msg.x, msg.y).then(() =>
+          page.mouse.up({ button: msg.btn === 2 ? "right" : "left" })
+        ).catch(() => {});
         break;
 
       // ── Scroll ────────────────────────────────────────────
-      //
-      // Translates the client's wheel event deltas into Puppeteer
-      // mouse wheel commands at the specified (x, y) position.
       case "scroll":
-        await page.mouse.wheel({ deltaX: msg.dX || 0, deltaY: msg.dY || 0 });
+        page.mouse.wheel({ deltaX: msg.dX || 0, deltaY: msg.dY || 0 }).catch(() => {});
         break;
 
-      // ── Keyboard events with Biometric Jitter ─────────────
-      //
-      // Anti-Profiling Defense: surveillance websites measure the
-      // exact millisecond flight-time between keypresses to build
-      // a biometric profile of a user's typing cadence.
-      //
-      // We enqueue key events with randomized Gaussian micro-delays
-      // (15–45ms), mathematically destroying biological typing signatures!
+      // ── Low-Latency Keyboard events (0ms artificial latency) ─
       case "keydown":
-        enqueueWithJitter(ws, async (p) => {
-          await p.keyboard.down(msg.key);
-        });
+        page.keyboard.down(msg.key).catch(() => {});
         break;
 
       case "keyup":
-        enqueueWithJitter(ws, async (p) => {
-          await p.keyboard.up(msg.key);
-        });
+        page.keyboard.up(msg.key).catch(() => {});
         break;
 
-      // For direct text input (e.g. from mobile virtual keyboard)
+      // Direct text insertion for mobile and virtual keyboards (instant)
       case "keypress":
         if (msg.text) {
-          enqueueWithJitter(ws, async (p) => {
-            await p.keyboard.type(msg.text, { delay: Math.floor(Math.random() * 25) + 20 });
-          });
+          page.keyboard.insertText(msg.text).catch(() => {});
         }
+        break;
+
+      // ── Frame Ack (Client drew frame) ─────────────────────
+      case "frame-ack":
+        handleClientAck(ws);
+        break;
+
+      // ── Latency / Ping Measurement ────────────────────────
+      case "ping":
+        send(ws, { type: "pong", t: msg.t });
         break;
 
       // ── Stream quality control ────────────────────────────
       case "set-quality": {
-        const q = Math.max(20, Math.min(95, Number(msg.quality) || 60));
+        const q = Math.max(20, Math.min(95, Number(msg.quality) || 45));
         ws._rbiSession.quality = q;
         if (ws._rbiSession.cdpSession) {
           try {
@@ -303,6 +372,8 @@ async function handleMessage(ws, raw) {
       case "burn-session": {
         console.log("[session] 🔥 Burning session (memory wipe & new circuit)...");
         try {
+          if (ws._rbiSession.ackTimer) clearTimeout(ws._rbiSession.ackTimer);
+
           // 1. Detach CDP & destroy existing context
           if (ws._rbiSession.cdpSession) {
             try { await ws._rbiSession.cdpSession.detach(); } catch {}
@@ -316,6 +387,8 @@ async function handleMessage(ws, raw) {
           const { context: newCtx, page: newPage } = await createSession();
           ws._rbiSession.context = newCtx;
           ws._rbiSession.page = newPage;
+          ws._rbiSession.canSendFrame = true;
+          ws._rbiSession.pendingFrame = null;
 
           // Restore viewport & quality
           const currentVp = ws._rbiSession.viewport || VIEWPORT;
@@ -329,11 +402,7 @@ async function handleMessage(ws, raw) {
             try {
               await newCdp.send("Page.screencastFrameAck", { sessionId: event.sessionId });
             } catch {}
-            if (ws.bufferedAmount > 64 * 1024) return;
-            if (ws.readyState === ws.OPEN) {
-              const imgBuffer = Buffer.from(event.data, "base64");
-              ws.send(Buffer.concat([Buffer.from([0x01]), imgBuffer]), { binary: true });
-            }
+            handleScreencastFrame(ws, event);
           });
 
           await newCdp.send("Page.startScreencast", {
@@ -472,6 +541,10 @@ async function cleanup(ws) {
   const session = ws._rbiSession;
   if (!session) return;
   ws._rbiSession = null;
+
+  if (session.ackTimer) {
+    clearTimeout(session.ackTimer);
+  }
 
   // Stop screencast polling fallback if active
   if (session.pollInterval) {

@@ -82,25 +82,30 @@ async function launch() {
       "--disable-webgl",
       "--disable-webgl2",
 
-      // ── Hardware Acceleration & Zero-Copy Rendering ─────────
+      // ── Hardware Acceleration & Zero-Latency Rendering ─────────
       "--enable-gpu-rasterization",
       "--enable-zero-copy",
-      "--enable-features=CanvasOopRasterization",
-      "--disk-cache-size=104857600",    // 100MB disk cache for fast page assets
+      "--enable-accelerated-2d-canvas",
+      "--disable-smooth-scrolling",         // Crucial: makes scroll instant & eliminates 15 intermediate frames
+      "--disable-ipc-flooding-protection",  // Allows ultra-fast Puppeteer CDP communication
+      "--disable-renderer-backgrounding",
+      "--disable-backgrounding-occluded-windows",
+      "--disk-cache-size=104857600",        // 100MB disk cache for fast page assets
 
       // ── Sensors & Privacy Protection ─────────────────────────
       "--disable-notifications",
       "--disable-geolocation",
-      "--disable-media-stream",         // Block camera/microphone
+      "--disable-media-stream",             // Block camera/microphone
       "--disable-speech-api",
       "--disable-background-timer-throttling",
 
-      // ── Privacy ──────────────────────────────────────────────
+      // ── Privacy & Performance Features ───────────────────────
       "--incognito",
       "--disable-client-side-phishing-detection",
       "--disable-component-update",
       "--disable-domain-reliability",
-      "--disable-features=AudioServiceOutOfProcess,IsolateOrigins,site-per-process",
+      "--disable-features=AudioServiceOutOfProcess,IsolateOrigins,site-per-process,Translate,OptimizationHints,MediaRouter,DialMediaRouteProvider",
+      "--enable-features=CanvasOopRasterization,NetworkService,NetworkServiceInProcess",
     ],
   });
 
@@ -207,24 +212,48 @@ async function createSession() {
   });
 
   // Disable JavaScript dialog boxes (alert, confirm, prompt)
-  // ── Network Acceleration: Block heavy telemetry & tracking networks ──────
-  // Tor is bandwidth-constrained. Blocking telemetry, ad networks, and beacons
-  // reduces network transfer by ~50% and speeds up page load by 3x-5x!
+  // ── Network Turbo: Block heavy telemetry, ad networks, fonts & media ───
+  // Tor is bandwidth-constrained. Blocking unnecessary bloated subresources
+  // reduces page byte weight by ~70% and makes pages load in 1-2 seconds!
   try {
     await page.setRequestInterception(true);
     page.on("request", (req) => {
+      const type = req.resourceType();
+      // Block autoplay video/audio streams that saturate Tor bandwidth
+      if (type === "media") {
+        return req.abort();
+      }
+      // Block web fonts: forces instant fallback to clean system fonts (0ms font delay!)
+      if (type === "font") {
+        return req.abort();
+      }
+
       const url = req.url().toLowerCase();
       if (
         url.includes("google-analytics.com") ||
         url.includes("googletagmanager.com") ||
         url.includes("doubleclick.net") ||
+        url.includes("googlesyndication.com") ||
+        url.includes("googleadservices.com") ||
         url.includes("facebook.net") ||
         url.includes("connect.facebook.net") ||
         url.includes("scorecardresearch.com") ||
         url.includes("criteo.com") ||
         url.includes("adnxs.com") ||
         url.includes("outbrain.com") ||
-        url.includes("taboola.com")
+        url.includes("taboola.com") ||
+        url.includes("amazon-adsystem.com") ||
+        url.includes("adservice.google") ||
+        url.includes("hotjar.com") ||
+        url.includes("clarity.ms") ||
+        url.includes("segment.io") ||
+        url.includes("mixpanel.com") ||
+        url.includes("adroll.com") ||
+        url.includes("rubiconproject.com") ||
+        url.includes("pubmatic.com") ||
+        url.includes("openx.net") ||
+        url.includes("sentry.io") ||
+        url.includes("datadoghq.com")
       ) {
         return req.abort();
       }

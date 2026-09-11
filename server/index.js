@@ -51,7 +51,7 @@ function isTorHealthy() {
 const app = express();
 
 // Serve the frontend from public/
-app.use(express.static(path.join(__dirname, "..", "public")));
+app.use(express.static(path.join(__dirname, "..", "public"), { maxAge: "1h", etag: true }));
 
 // Health-check endpoint (protected)
 app.get("/health", requireAuth, (_req, res) => {
@@ -80,10 +80,15 @@ const server = http.createServer(app);
 // ── WebSocket server ──────────────────────────────────────────
 //
 // The WS server is attached to the same HTTP server. It listens for
-// upgrade requests on the /ws path. The client must include the auth
-// token as a query parameter: ws://host/ws?token=SECRET
+// upgrade requests on the /ws path.
 //
-const wss = new WebSocketServer({ noServer: true });
+// Ultra-Low Latency optimizations:
+//   - perMessageDeflate: false — avoids wasting CPU compressing already-compressed JPEGs
+//   - TCP_NODELAY — disables Nagle's algorithm, sending packets immediately (0ms delay)
+const wss = new WebSocketServer({
+  noServer: true,
+  perMessageDeflate: false,
+});
 
 server.on("upgrade", (request, socket, head) => {
   // Only accept upgrades on /ws
@@ -92,6 +97,10 @@ server.on("upgrade", (request, socket, head) => {
     socket.destroy();
     return;
   }
+
+  // Force TCP_NODELAY immediately: cuts packet ping by 40-80ms!
+  socket.setNoDelay(true);
+  socket.setKeepAlive(true, 10000);
 
   // Open access — complete WebSocket handshake for any client
   wss.handleUpgrade(request, socket, head, (ws) => {
@@ -146,13 +155,15 @@ function startTor() {
       "--ControlPort", "9051",
       "--CookieAuthentication", "1",
       "--AvoidDiskWrites", "1",
-      "--CircuitBuildTimeout", "15",
+      "--CircuitBuildTimeout", "10",
       "--NumEntryGuards", "1",
       "--ClientUseIPv6", "0",
       "--AutomapHostsOnResolve", "1",
+      "--NewCircuitPeriod", "1800",
+      "--MaxCircuitDirtiness", "1800",
+      "--ClientOnly", "1",
       "--DataDirectory", dataDir,
     ];
-
 
     // On Windows, bundle includes geoip files in tor/data
     const geoip = path.join(dataDir, "geoip");

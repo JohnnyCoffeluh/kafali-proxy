@@ -7,8 +7,8 @@
   <meta name="theme-color" content="#09090b" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="RBI Shield" />
-  <title>RBI Proxy — Remote Browser Isolation</title>
+  <meta name="apple-mobile-web-app-title" content="Kafali Project" />
+  <title>Kafali Project — Fast Isolated Web Proxy</title>
   <link rel="stylesheet" href="style.css" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>" />
   <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%2309090b'/><text y='.75em' x='50%' text-anchor='middle' font-size='70'>🛡️</text></svg>" />
@@ -32,8 +32,8 @@
   <div id="login-overlay" style="display: none !important;" aria-hidden="true">
     <div class="login-card">
       <div class="logo">🛡️</div>
-      <h1>RBI Proxy</h1>
-      <p>Remote Browser Isolation — Secure, Isolated Browsing</p>
+      <h1>Kafali Project</h1>
+      <p>Remote Browser Isolation — Fast, Ban-Free Browsing</p>
 
       <form id="login-form">
         <div class="login-field">
@@ -56,11 +56,11 @@
   <!-- ── Main Application ──────────────────────────────────── -->
   <div id="app" class="active">
 
-
     <!-- Top navigation bar -->
     <nav class="navbar" id="navbar">
       <!-- Row 1: Core Navigation -->
       <div class="nav-primary-row">
+        <div class="brand-badge" title="Kafali Project">🛡️ Kafali</div>
         <div class="nav-btn-group">
           <button class="nav-btn" id="btn-back"  title="Back">◀</button>
           <button class="nav-btn" id="btn-fwd"   title="Forward">▶</button>
@@ -86,7 +86,6 @@
         </form>
       </div>
 
-
       <!-- Row 2: Responsive Toolbar & Advanced Controls -->
       <div class="nav-secondary-row">
         <!-- Device Mode Selector -->
@@ -101,10 +100,16 @@
         <!-- Stream Quality -->
         <div class="control-item" title="Stream Quality">
           <select id="quality-select" class="nav-select">
-            <option value="40">⚡ Fast</option>
-            <option value="60" selected>⚖️ Balanced</option>
+            <option value="35">⚡ Ultra Fast</option>
+            <option value="45" selected>⚡ Fast (Recommended)</option>
+            <option value="65">⚖️ Balanced</option>
             <option value="85">💎 Sharp</option>
           </select>
+        </div>
+
+        <!-- Live Ping Indicator -->
+        <div class="ping-badge" id="ping-badge" title="Real-time roundtrip ping latency">
+          ⚡ --ms
         </div>
 
         <!-- Soft Keyboard Trigger (Mobile/Touch) -->
