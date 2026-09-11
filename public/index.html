@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content" />
+  <meta name="description" content="Remote Browser Isolation — browse the web securely through an isolated proxy" />
+  <meta name="theme-color" content="#09090b" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RBI Shield" />
+  <title>RBI Proxy — Remote Browser Isolation</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>" />
+  <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%2309090b'/><text y='.75em' x='50%' text-anchor='middle' font-size='70'>🛡️</text></svg>" />
+</head>
+<body>
+
+  <!-- ── Virtual Keyboard Bridge (for Touch/Mobile Devices) ─── -->
+  <input
+    type="text"
+    id="virtual-keyboard-bridge"
+    class="virtual-keyboard-bridge"
+    autocomplete="off"
+    autocorrect="off"
+    autocapitalize="off"
+    spellcheck="false"
+    tabindex="-1"
+    aria-hidden="true"
+  />
+
+  <!-- ── Login Overlay (Bypassed for instant open access) ───── -->
+  <div id="login-overlay" style="display: none !important;" aria-hidden="true">
+    <div class="login-card">
+      <div class="logo">🛡️</div>
+      <h1>RBI Proxy</h1>
+      <p>Remote Browser Isolation — Secure, Isolated Browsing</p>
+
+      <form id="login-form">
+        <div class="login-field">
+          <input
+            type="text"
+            id="token-input"
+            value="public"
+            placeholder="Access token"
+            autocomplete="off"
+          />
+        </div>
+        <div class="login-error" id="login-error"></div>
+        <button type="submit" class="btn btn-full" id="connect-btn">
+          🔗 Connect
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ── Main Application ──────────────────────────────────── -->
+  <div id="app" class="active">
+
+
+    <!-- Top navigation bar -->
+    <nav class="navbar" id="navbar">
+      <!-- Row 1: Core Navigation -->
+      <div class="nav-primary-row">
+        <div class="nav-btn-group">
+          <button class="nav-btn" id="btn-back"  title="Back">◀</button>
+          <button class="nav-btn" id="btn-fwd"   title="Forward">▶</button>
+          <button class="nav-btn" id="btn-reload" title="Reload">↻</button>
+        </div>
+
+        <!-- URL input bar -->
+        <div class="url-bar">
+          <span class="lock-icon" id="lock-icon">🔒</span>
+          <input
+            type="url"
+            id="url-input"
+            placeholder="Enter URL or search…"
+            spellcheck="false"
+            autocomplete="off"
+            autocapitalize="off"
+          />
+        </div>
+
+        <!-- Go button -->
+        <button class="btn go-btn" id="btn-go">Go</button>
+      </div>
+
+      <!-- Row 2: Responsive Toolbar & Advanced Controls -->
+      <div class="nav-secondary-row">
+        <!-- Device Mode Selector -->
+        <div class="control-item" title="Device Viewport Mode">
+          <select id="device-select" class="nav-select">
+            <option value="desktop" selected>💻 Desktop (1280×800)</option>
+            <option value="mobile">📱 Mobile (390×844)</option>
+            <option value="tablet">📟 Tablet (820×1180)</option>
+          </select>
+        </div>
+
+        <!-- Stream Quality -->
+        <div class="control-item" title="Stream Quality">
+          <select id="quality-select" class="nav-select">
+            <option value="40">⚡ Fast</option>
+            <option value="60" selected>⚖️ Balanced</option>
+            <option value="85">💎 Sharp</option>
+          </select>
+        </div>
+
+        <!-- Soft Keyboard Trigger (Mobile/Touch) -->
+        <button class="nav-action-btn" id="btn-keyboard" title="Open Touch Keyboard">
+          ⌨️ Keyboard
+        </button>
+
+        <!-- NoScript / JS Toggle (Paranoid Mode) -->
+        <button class="nav-action-btn" id="btn-toggle-js" title="NoScript Mode: Toggle Remote JavaScript">
+          🛡️ JS: ON
+        </button>
+
+        <!-- Tor Circuit Rotation -->
+        <button class="nav-action-btn" id="btn-circuit" title="Rotate Tor Circuit (New Identity)">
+          🧅 New Circuit
+        </button>
+
+        <!-- Panic / Burn Session -->
+        <button class="nav-action-btn btn-danger" id="btn-burn" title="Burn Session: Purge memory & rotate circuit">
+          🔥 Burn
+        </button>
+
+        <!-- Connection status -->
+        <div class="status-indicator" id="status-indicator">
+          <span class="status-dot"></span>
+          <span class="status-text">Offline</span>
+        </div>
+      </div>
+    </nav>
+
+    <!-- Emergency Killswitch Banner (Hidden by default) -->
+    <div id="killswitch-banner" class="killswitch-banner hidden">
+      <span class="killswitch-icon">🛑</span>
+      <span class="killswitch-text">KILLSWITCH ENGAGED: Tor connection lost. Outbound traffic severed to protect your identity.</span>
+    </div>
+
+    <!-- Remote browser viewport -->
+    <div class="viewport-container" id="viewport-container">
+      <div class="viewport-placeholder" id="viewport-placeholder">
+        <div class="spinner"></div>
+        <span>Enter a URL to start browsing</span>
+      </div>
+      <canvas id="viewport" width="1280" height="800"></canvas>
+    </div>
+
+    <!-- Bottom status bar -->
+    <div class="status-bar">
+      <span id="page-title">Ready</span>
+      <span id="viewport-size">1280 × 800</span>
+    </div>
+
+  </div>
+
+  <!-- Toast container for notifications -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

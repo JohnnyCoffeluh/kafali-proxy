@@ -1,0 +1,20 @@
+# Ignore dependencies and artifacts
+node_modules
+npm-debug.log
+
+# Ignore Windows Tor binaries and local data cache
+tor/
+tor/tor/
+tor/data/
+*.exe
+cloudflared.exe
+
+# Ignore environment files and git
+.env
+.git
+.gitignore
+
+# Ignore logs and temp files
+*.log
+.DS_Store
+Thumbs.db

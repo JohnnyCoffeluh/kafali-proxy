@@ -1,0 +1,19 @@
+# ── Render.com Blueprint ──────────────────────────────────────────────
+# Deploy 100% Free on Render:
+# 1. Push this repo to GitHub
+# 2. On Render.com: "New +" -> "Blueprint" -> Connect repository
+# ─────────────────────────────────────────────────────────────────────
+
+services:
+  - type: web
+    name: rbi-proxy
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: PORT
+        value: 7860
+      - key: NODE_ENV
+        value: production
+

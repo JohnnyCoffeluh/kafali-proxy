@@ -1,0 +1,17 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+
+# Environment secrets
+.env
+
+# Windows Tor binaries & runtime cache (cloud containers install native Linux Tor via Docker)
+tor/
+*.exe
+cloudflared.exe
+
+# OS / Editor junk
+.DS_Store
+Thumbs.db
+*.log
+.agents/
