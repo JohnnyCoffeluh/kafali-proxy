@@ -67,22 +67,25 @@
           <button class="nav-btn" id="btn-reload" title="Reload">↻</button>
         </div>
 
-        <!-- URL input bar -->
-        <div class="url-bar">
-          <span class="lock-icon" id="lock-icon">🔒</span>
-          <input
-            type="url"
-            id="url-input"
-            placeholder="Enter URL or search…"
-            spellcheck="false"
-            autocomplete="off"
-            autocapitalize="off"
-          />
-        </div>
-
-        <!-- Go button -->
-        <button class="btn go-btn" id="btn-go">Go</button>
+        <!-- URL input form -->
+        <form id="url-form" class="url-form" action="javascript:void(0);">
+          <div class="url-bar">
+            <span class="lock-icon" id="lock-icon">🔒</span>
+            <input
+              type="text"
+              id="url-input"
+              placeholder="Search DuckDuckGo or enter address…"
+              value="https://duckduckgo.com"
+              spellcheck="false"
+              autocomplete="off"
+              autocapitalize="off"
+            />
+          </div>
+          <!-- Go button -->
+          <button type="submit" class="btn go-btn" id="btn-go">Go</button>
+        </form>
       </div>
+
 
       <!-- Row 2: Responsive Toolbar & Advanced Controls -->
       <div class="nav-secondary-row">
@@ -142,9 +145,10 @@
     <div class="viewport-container" id="viewport-container">
       <div class="viewport-placeholder" id="viewport-placeholder">
         <div class="spinner"></div>
-        <span>Enter a URL to start browsing</span>
+        <span>Connecting to isolated browser via Tor…</span>
       </div>
       <canvas id="viewport" width="1280" height="800"></canvas>
+
     </div>
 
     <!-- Bottom status bar -->

@@ -252,9 +252,19 @@ html, body {
   transform: scale(0.92);
 }
 
+/* URL form wrapper */
+.url-form {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 /* URL input bar */
 .url-bar {
   flex: 1;
+
   display: flex;
   align-items: center;
   gap: 10px;

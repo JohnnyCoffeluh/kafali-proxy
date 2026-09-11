@@ -117,7 +117,19 @@ async function initSession(ws) {
 
   // Send a ready signal so the client knows the session is live
   send(ws, { type: "ready", viewport: VIEWPORT, quality: SCREENCAST_QUALITY });
+
+  // Auto-navigate to DuckDuckGo so the browser starts immediately with a working live page!
+  setTimeout(async () => {
+    try {
+      if (ws.readyState === ws.OPEN && ws._rbiSession?.page) {
+        await handleNavigate(ws, ws._rbiSession.page, "https://duckduckgo.com");
+      }
+    } catch (e) {
+      console.warn("[session] Initial landing navigation error:", e.message);
+    }
+  }, 200);
 }
+
 
 // ── Message router ────────────────────────────────────────────
 
@@ -417,36 +429,44 @@ async function handleMessage(ws, raw) {
  *   3. Send the final URL back to the client (may differ after redirects)
  */
 async function handleNavigate(ws, page, url) {
-  if (!url) {
+  let target = String(url).trim();
+
+  if (!target) {
     return send(ws, { type: "error", message: "Missing URL" });
   }
 
-  // Auto-prefix https:// if no scheme is provided
-  if (!/^https?:\/\//i.test(url)) {
-    url = "https://" + url;
+  // If not starting with http:// or https://:
+  if (!/^https?:\/\//i.test(target)) {
+    // If it contains spaces or lacks a dot, treat it as a search query!
+    if (target.includes(" ") || !target.includes(".")) {
+      target = `https://duckduckgo.com/?q=${encodeURIComponent(target)}`;
+    } else {
+      target = "https://" + target;
+    }
   }
 
   // ── SSRF check ──────────────────────────────────────────────
-  const check = await isSafeUrl(url);
+  const check = await isSafeUrl(target);
   if (!check.safe) {
-    console.warn("[ssrf] Blocked navigation to:", url, "—", check.reason);
+    console.warn("[ssrf] Blocked navigation to:", target, "—", check.reason);
     return send(ws, {
       type: "nav-blocked",
-      url,
+      url: target,
       reason: check.reason,
     });
   }
 
   // ── Navigate ────────────────────────────────────────────────
-  send(ws, { type: "nav-start", url });
+  send(ws, { type: "nav-start", url: target });
 
   try {
-    await page.goto(url, {
+    await page.goto(target, {
       waitUntil: "domcontentloaded",
       timeout: NAV_TIMEOUT,
     });
 
     send(ws, {
+
       type: "nav-done",
       url: page.url(),
       title: await page.title(),

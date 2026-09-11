@@ -452,21 +452,33 @@ function isModifierOnly(key) {
 
 // ── Navigation controls ───────────────────────────────────────
 
+const urlForm = $("url-form");
+if (urlForm) {
+  urlForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    navigateTo(urlInput.value.trim());
+    canvas.focus();
+  });
+}
+
 // URL bar: submit on Enter
 urlInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
     e.preventDefault();
     navigateTo(urlInput.value.trim());
-    // Move focus to canvas so keyboard events go to the remote page
     canvas.focus();
   }
 });
 
 // Go button
-btnGo.addEventListener("click", () => {
-  navigateTo(urlInput.value.trim());
-  canvas.focus();
-});
+if (btnGo) {
+  btnGo.addEventListener("click", (e) => {
+    e.preventDefault();
+    navigateTo(urlInput.value.trim());
+    canvas.focus();
+  });
+}
+
 
 // Back / Forward / Reload buttons
 btnBack.addEventListener("click",   () => sendWs({ type: "back" }));
