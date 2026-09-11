@@ -141,15 +141,18 @@ function startTor() {
     console.log(`[tor] Starting Tor proxy via ${torExe} (data: ${dataDir})...`);
 
     const torArgs = [
-      "--SocksPort", "9050 IsolateDestAddr IsolateDestPort KeepAliveIsolateSOCKSAuth",
+      "--SocksPort", "9050 IsolateDestAddr IsolateDestPort KeepAliveIsolateSOCKSAuth OptimisticData",
       "--DNSPort", "9053",
       "--ControlPort", "9051",
       "--CookieAuthentication", "1",
       "--AvoidDiskWrites", "1",
-      "--CircuitBuildTimeout", "30",
-      "--NumEntryGuards", "3",
+      "--CircuitBuildTimeout", "15",
+      "--NumEntryGuards", "1",
+      "--ClientUseIPv6", "0",
+      "--AutomapHostsOnResolve", "1",
       "--DataDirectory", dataDir,
     ];
+
 
     // On Windows, bundle includes geoip files in tor/data
     const geoip = path.join(dataDir, "geoip");

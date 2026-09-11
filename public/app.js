@@ -299,22 +299,23 @@ function renderBase64Frame(base64Data) {
   img.src = "data:image/jpeg;base64," + base64Data;
 }
 
-// ── Input capture: Mouse ──────────────────────────────────────
+// ── Input capture: Cached Viewport & Touch Batching ───────────
+
+let cachedCanvasRect = null;
+function getCanvasRect() {
+  if (!cachedCanvasRect) {
+    cachedCanvasRect = canvas.getBoundingClientRect();
+  }
+  return cachedCanvasRect;
+}
+window.addEventListener("resize", () => { cachedCanvasRect = null; });
+window.addEventListener("scroll", () => { cachedCanvasRect = null; }, { passive: true });
 
 /**
- * Translate a canvas mouse event into remote viewport coordinates.
- *
- * The canvas may be scaled by CSS (max-width/max-height), so we need
- * to convert the client-space click position to the actual pixel
- * coordinates of the remote viewport.
- *
- *   scaleX = canvas.width  / canvas.clientWidth   (CSS display size)
- *   scaleY = canvas.height / canvas.clientHeight
- *   remoteX = (event.clientX - canvasRect.left) * scaleX
- *   remoteY = (event.clientY - canvasRect.top)  * scaleY
+ * Translate an event into remote viewport coordinates with zero layout thrashing.
  */
 function canvasCoords(event) {
-  const rect = canvas.getBoundingClientRect();
+  const rect = getCanvasRect();
   const scaleX = canvas.width / rect.width;
   const scaleY = canvas.height / rect.height;
   return {
@@ -323,7 +324,7 @@ function canvasCoords(event) {
   };
 }
 
-// Mouse click — send (x, y) to the server which calls page.mouse.click()
+// Mouse click — send (x, y) to the server
 canvas.addEventListener("mousedown", (e) => {
   e.preventDefault();
   const { x, y } = canvasCoords(e);
@@ -339,8 +340,7 @@ canvas.addEventListener("mouseup", (e) => {
 // Mouse move — enables hover effects on the remote page
 canvas.addEventListener("mousemove", (e) => {
   const { x, y } = canvasCoords(e);
-  // Throttle: only send if enough time has passed
-  throttledSend("mousemove", { type: "mousemove", x, y }, 50);
+  throttledSend("mousemove", { type: "mousemove", x, y }, 40);
 });
 
 // Scroll — translate wheel deltas to remote page scrolling
@@ -359,17 +359,33 @@ canvas.addEventListener("wheel", (e) => {
 // Prevent context menu on the canvas
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
-// ── Input capture: Touch / Mobile ─────────────────────────────
-//
-// Translates native touch gestures (tap, drag, swipe) into remote events:
-//   - Clean, stationary tap (< 350ms, < 10px delta) → page.mouse.click(x, y)
-//   - Touch drag / swipe                             → page.mouse.wheel(...) smooth scroll
+// ── Ultra-Responsive Touch / Mobile Engine ─────────────────────
+// Uses requestAnimationFrame to batch touch moves into single 60fps packets,
+// preventing WebSocket buffer congestion and rubber-banding lag.
 let touchStartX = 0;
 let touchStartY = 0;
 let lastTouchClientX = 0;
 let lastTouchClientY = 0;
 let touchStartTime = 0;
 let isTouchSwiping = false;
+let pendingScrollX = 0;
+let pendingScrollY = 0;
+let rAFScrollPending = false;
+
+function flushTouchScroll() {
+  rAFScrollPending = false;
+  if (pendingScrollX !== 0 || pendingScrollY !== 0) {
+    sendWs({
+      type: "scroll",
+      x: touchStartX,
+      y: touchStartY,
+      dX: pendingScrollX,
+      dY: pendingScrollY,
+    });
+    pendingScrollX = 0;
+    pendingScrollY = 0;
+  }
+}
 
 canvas.addEventListener("touchstart", (e) => {
   if (e.touches.length !== 1) return;
@@ -381,6 +397,8 @@ canvas.addEventListener("touchstart", (e) => {
   lastTouchClientY = touch.clientY;
   touchStartTime = Date.now();
   isTouchSwiping = false;
+  pendingScrollX = 0;
+  pendingScrollY = 0;
 }, { passive: true });
 
 canvas.addEventListener("touchmove", (e) => {
@@ -389,32 +407,33 @@ canvas.addEventListener("touchmove", (e) => {
   const deltaX = lastTouchClientX - touch.clientX;
   const deltaY = lastTouchClientY - touch.clientY;
 
-  // Threshold to differentiate tap from scroll
-  if (!isTouchSwiping && (Math.abs(deltaX) > 6 || Math.abs(deltaY) > 6)) {
+  if (!isTouchSwiping && (Math.abs(deltaX) > 4 || Math.abs(deltaY) > 4)) {
     isTouchSwiping = true;
   }
 
   if (isTouchSwiping) {
-    // Send natural scroll deltas to remote browser
-    sendWs({
-      type: "scroll",
-      x: touchStartX,
-      y: touchStartY,
-      dX: Math.round(deltaX * 1.5),
-      dY: Math.round(deltaY * 1.5),
-    });
+    pendingScrollX += Math.round(deltaX * 1.25);
+    pendingScrollY += Math.round(deltaY * 1.25);
     lastTouchClientX = touch.clientX;
     lastTouchClientY = touch.clientY;
+
+    if (!rAFScrollPending) {
+      rAFScrollPending = true;
+      requestAnimationFrame(flushTouchScroll);
+    }
   }
 }, { passive: true });
 
 canvas.addEventListener("touchend", (e) => {
   const duration = Date.now() - touchStartTime;
-  if (!isTouchSwiping && duration < 350) {
-    // Short stationary tap -> Send click
+  if (!isTouchSwiping && duration < 320) {
     sendWs({ type: "click", x: touchStartX, y: touchStartY, btn: 0 });
   }
+  if (rAFScrollPending) {
+    flushTouchScroll();
+  }
 }, { passive: true });
+
 
 // ── Input capture: Keyboard ───────────────────────────────────
 

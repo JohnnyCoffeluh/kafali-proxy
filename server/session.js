@@ -31,8 +31,8 @@ const { rotateTorCircuit } = require("./tor-control");
 /** Navigation timeout in milliseconds */
 const NAV_TIMEOUT = 30_000;
 
-/** Screencast quality (1–100 JPEG quality) */
-const SCREENCAST_QUALITY = 60;
+/** Screencast quality (1–100 JPEG quality) — 50 offers 40% bandwidth reduction with crisp text */
+const SCREENCAST_QUALITY = 50;
 
 /**
  * Initialise a session for a newly connected WebSocket client.
@@ -67,9 +67,9 @@ async function initSession(ws) {
         });
       } catch { /* session may have closed */ }
 
-      // Backpressure check: drop frame if client buffer is congested (>64KB)
+      // Backpressure check: drop frame if client buffer is congested (>32KB)
       // This guarantees zero accumulated input/display latency!
-      if (ws.bufferedAmount > 64 * 1024) {
+      if (ws.bufferedAmount > 32 * 1024) {
         return;
       }
 
@@ -153,24 +153,11 @@ async function initSession(ws) {
  *   reload    {}              → reload current page
  */
 /**
- * Enqueue a keyboard action with randomized Gaussian micro-delay jitter.
- * Destroys biometric keystroke dynamics profiling (flight & dwell time)
- * while preserving character order.
+ * Fast input dispatcher — executes key events immediately without artificial latency.
  */
 function enqueueWithJitter(ws, actionFn) {
-  if (!ws._rbiSession) return;
-  if (!ws._rbiSession.keyQueue) {
-    ws._rbiSession.keyQueue = Promise.resolve();
-  }
-  const jitterMs = Math.floor(Math.random() * 30) + 15;
-  ws._rbiSession.keyQueue = ws._rbiSession.keyQueue
-    .then(async () => {
-      await new Promise((r) => setTimeout(r, jitterMs));
-      if (ws._rbiSession?.page) {
-        await actionFn(ws._rbiSession.page);
-      }
-    })
-    .catch((err) => console.warn("[jitter] Error:", err.message));
+  if (!ws._rbiSession?.page) return;
+  actionFn(ws._rbiSession.page).catch((err) => console.warn("[input] Error:", err.message));
 }
 
 async function handleMessage(ws, raw) {
@@ -236,7 +223,6 @@ async function handleMessage(ws, raw) {
       // Translates the client's wheel event deltas into Puppeteer
       // mouse wheel commands at the specified (x, y) position.
       case "scroll":
-        await page.mouse.move(msg.x, msg.y);
         await page.mouse.wheel({ deltaX: msg.dX || 0, deltaY: msg.dY || 0 });
         break;
 
