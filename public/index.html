@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Kafali Project" />
   <title>Kafali Project — Fast Isolated Web Proxy</title>
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=2.2" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>" />
   <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%2309090b'/><text y='.75em' x='50%' text-anchor='middle' font-size='70'>🛡️</text></svg>" />
 </head>
@@ -100,10 +100,11 @@
         <!-- Stream Quality -->
         <div class="control-item" title="Stream Quality">
           <select id="quality-select" class="nav-select">
-            <option value="35">⚡ Ultra Fast</option>
-            <option value="45" selected>⚡ Fast (Recommended)</option>
-            <option value="65">⚖️ Balanced</option>
-            <option value="85">💎 Sharp</option>
+            <option value="35">⚡ Ultra Fast (35%)</option>
+            <option value="40">🎬 Smooth Video (40%)</option>
+            <option value="50" selected>⚡ Fast (50%)</option>
+            <option value="70">⚖️ Balanced (70%)</option>
+            <option value="85">💎 Sharp (85%)</option>
           </select>
         </div>
 
@@ -152,8 +153,30 @@
         <div class="spinner"></div>
         <span>Connecting to isolated browser via Tor…</span>
       </div>
-      <canvas id="viewport" width="1280" height="800"></canvas>
+      <canvas id="viewport" width="1280" height="800" tabindex="0"></canvas>
 
+      <!-- Floating Type Button for Mobile / Touch Devices -->
+      <button type="button" id="btn-floating-type" class="btn-floating-type" title="Type text into webpage">
+        ⌨️ Type
+      </button>
+    </div>
+
+    <!-- Floating / Mobile Quick Input Bar -->
+    <div id="quick-input-bar" class="quick-input-bar hidden">
+      <div class="quick-input-inner">
+        <span class="quick-input-icon">⌨️</span>
+        <input
+          type="text"
+          id="quick-text-input"
+          placeholder="Type or paste to send to webpage (Enter sends)…"
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="off"
+          spellcheck="false"
+        />
+        <button type="button" id="btn-quick-send" class="btn-quick-action">Send ↵</button>
+        <button type="button" id="btn-quick-close" class="btn-quick-close" title="Close">✕</button>
+      </div>
     </div>
 
     <!-- Bottom status bar -->
@@ -167,6 +190,6 @@
   <!-- Toast container for notifications -->
   <div class="toast-container" id="toast-container"></div>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=2.2"></script>
 </body>
 </html>

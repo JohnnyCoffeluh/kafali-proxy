@@ -47,77 +47,65 @@ function sendFrameToClient(ws, base64Data) {
 }
 
 /**
- * Low-Latency Flow-Controlled Screencast Handler.
- * Guarantees exactly ONE frame in flight over the network pipe!
- * Prevents buffer bloat, eliminates input lag, and prevents rubber-banding.
+ * High-Performance Adaptive Screencast Pacer.
+ * Streams smooth 25-30 FPS video without stop-and-wait round-trip locks.
+ * Uses kernel socket buffer backpressure (ws.bufferedAmount) to prevent queue bloat.
  */
 function handleScreencastFrame(ws, event) {
   const session = ws._rbiSession;
   if (!session) return;
 
-  // Drop stale frame if socket buffer is congested (>24KB in kernel)
-  if (ws.bufferedAmount > 24 * 1024) {
+  const now = Date.now();
+  // Target ~30 FPS (~33ms spacing) for silky smooth video streaming
+  const minInterval = 33;
+
+  // Congestion backpressure: if socket queue exceeds 48KB, network is busy.
+  // Hold latest frame so we never lag or buffer bloat.
+  if (ws.bufferedAmount > 48 * 1024) {
     session.pendingFrame = event.data;
     return;
   }
 
-  // Flow control: if client has not yet acknowledged rendering the last frame,
-  // hold this newest frame in memory and send it the instant the client is ready!
-  if (!session.canSendFrame) {
+  const elapsed = now - (session.lastSendTime || 0);
+  if (elapsed < minInterval) {
     session.pendingFrame = event.data;
-    return;
-  }
-
-  // Send the frame immediately
-  session.canSendFrame = false;
-  session.pendingFrame = null;
-
-  // Safety watchdog: if a frame or ack is lost on network, unblock after 120ms
-  if (session.ackTimer) clearTimeout(session.ackTimer);
-  session.ackTimer = setTimeout(() => {
-    if (session) {
-      session.canSendFrame = true;
-      if (session.pendingFrame) {
-        const next = session.pendingFrame;
-        session.pendingFrame = null;
-        sendFrameToClient(ws, next);
-      }
+    if (!session.pacerTimer) {
+      session.pacerTimer = setTimeout(() => {
+        session.pacerTimer = null;
+        if (ws._rbiSession && session.pendingFrame && ws.bufferedAmount <= 48 * 1024) {
+          const frame = session.pendingFrame;
+          session.pendingFrame = null;
+          session.lastSendTime = Date.now();
+          sendFrameToClient(ws, frame);
+        }
+      }, minInterval - elapsed);
     }
-  }, 120);
+    return;
+  }
 
+  // Clear any queued pacer timer
+  if (session.pacerTimer) {
+    clearTimeout(session.pacerTimer);
+    session.pacerTimer = null;
+  }
+
+  session.lastSendTime = now;
+  session.pendingFrame = null;
   sendFrameToClient(ws, event.data);
 }
 
 /**
- * Handle Frame Ack from client (client has drawn the frame).
+ * Handle Frame Ack from client (client drew the frame).
+ * Used for round-trip latency tracking and flushing pending frames.
  */
 function handleClientAck(ws) {
   const session = ws._rbiSession;
   if (!session) return;
-
-  if (session.ackTimer) {
-    clearTimeout(session.ackTimer);
-    session.ackTimer = null;
-  }
-
-  session.canSendFrame = true;
-
-  if (session.pendingFrame) {
+  session.lastAckTime = Date.now();
+  if (session.pendingFrame && ws.bufferedAmount <= 32 * 1024 && !session.pacerTimer) {
     const next = session.pendingFrame;
     session.pendingFrame = null;
-    session.canSendFrame = false;
-
-    session.ackTimer = setTimeout(() => {
-      if (session) {
-        session.canSendFrame = true;
-        if (session.pendingFrame) {
-          const n = session.pendingFrame;
-          session.pendingFrame = null;
-          sendFrameToClient(ws, n);
-        }
-      }
-    }, 120);
-
+    session.lastSendTime = Date.now();
     sendFrameToClient(ws, next);
   }
 }
@@ -137,9 +125,11 @@ async function initSession(ws) {
     page,
     cdpSession: null,
     quality: SCREENCAST_QUALITY,
-    canSendFrame: true,
+    lastSendTime: 0,
+    lastAckTime: 0,
     pendingFrame: null,
-    ackTimer: null,
+    pacerTimer: null,
+    navigating: false,
   };
 
   // ── 2. Start screencast via Chrome DevTools Protocol ────────
@@ -198,10 +188,10 @@ async function initSession(ws) {
   // Send a ready signal so the client knows the session is live
   send(ws, { type: "ready", viewport: VIEWPORT, quality: SCREENCAST_QUALITY });
 
-  // Auto-navigate to DuckDuckGo so the browser starts immediately with a working live page!
+  // Auto-navigate to DuckDuckGo only if the client hasn't initiated navigation
   setTimeout(async () => {
     try {
-      if (ws.readyState === ws.OPEN && ws._rbiSession?.page) {
+      if (ws.readyState === ws.OPEN && ws._rbiSession?.page && !ws._rbiSession.hasNavigated) {
         await handleNavigate(ws, ws._rbiSession.page, "https://duckduckgo.com");
       }
     } catch (e) {
@@ -310,7 +300,11 @@ async function handleMessage(ws, raw) {
       // Direct text insertion for mobile and virtual keyboards (instant)
       case "keypress":
         if (msg.text) {
-          page.keyboard.insertText(msg.text).catch(() => {});
+          page.keyboard.insertText(msg.text).then(() => {
+            if (msg.submit) {
+              return page.keyboard.press("Enter");
+            }
+          }).catch(() => {});
         }
         break;
 
@@ -372,7 +366,10 @@ async function handleMessage(ws, raw) {
       case "burn-session": {
         console.log("[session] 🔥 Burning session (memory wipe & new circuit)...");
         try {
-          if (ws._rbiSession.ackTimer) clearTimeout(ws._rbiSession.ackTimer);
+          if (ws._rbiSession.pacerTimer) {
+            clearTimeout(ws._rbiSession.pacerTimer);
+            ws._rbiSession.pacerTimer = null;
+          }
 
           // 1. Detach CDP & destroy existing context
           if (ws._rbiSession.cdpSession) {
@@ -387,8 +384,9 @@ async function handleMessage(ws, raw) {
           const { context: newCtx, page: newPage } = await createSession();
           ws._rbiSession.context = newCtx;
           ws._rbiSession.page = newPage;
-          ws._rbiSession.canSendFrame = true;
+          ws._rbiSession.lastSendTime = 0;
           ws._rbiSession.pendingFrame = null;
+          ws._rbiSession.pacerTimer = null;
 
           // Restore viewport & quality
           const currentVp = ws._rbiSession.viewport || VIEWPORT;
@@ -484,6 +482,9 @@ async function handleMessage(ws, raw) {
  *   3. Send the final URL back to the client (may differ after redirects)
  */
 async function handleNavigate(ws, page, url) {
+  if (ws._rbiSession) {
+    ws._rbiSession.hasNavigated = true;
+  }
   let target = String(url).trim();
 
   if (!target) {
@@ -512,6 +513,7 @@ async function handleNavigate(ws, page, url) {
   }
 
   // ── Navigate ────────────────────────────────────────────────
+  if (ws._rbiSession) ws._rbiSession.navigating = true;
   send(ws, { type: "nav-start", url: target });
 
   try {
@@ -520,13 +522,19 @@ async function handleNavigate(ws, page, url) {
       timeout: NAV_TIMEOUT,
     });
 
-    send(ws, {
+    if (ws._rbiSession) ws._rbiSession.navigating = false;
 
+    send(ws, {
       type: "nav-done",
       url: page.url(),
       title: await page.title(),
     });
   } catch (err) {
+    if (ws._rbiSession) ws._rbiSession.navigating = false;
+    // Don't toast error if user navigated away or navigation was superseded
+    if (err.message.includes("net::ERR_ABORTED") || err.message.includes("Execution context was destroyed")) {
+      return;
+    }
     send(ws, { type: "nav-error", url, message: err.message });
   }
 }
@@ -542,8 +550,9 @@ async function cleanup(ws) {
   if (!session) return;
   ws._rbiSession = null;
 
-  if (session.ackTimer) {
-    clearTimeout(session.ackTimer);
+  if (session.pacerTimer) {
+    clearTimeout(session.pacerTimer);
+    session.pacerTimer = null;
   }
 
   // Stop screencast polling fallback if active

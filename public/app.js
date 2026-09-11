@@ -52,9 +52,15 @@ const btnKeyboard      = $("btn-keyboard");
 const virtualKeyboardBridge = $("virtual-keyboard-bridge");
 const lockIcon         = $("lock-icon");
 const pingBadge        = $("ping-badge");
+const quickInputBar    = $("quick-input-bar");
+const quickTextInput   = $("quick-text-input");
+const btnQuickSend     = $("btn-quick-send");
+const btnQuickClose    = $("btn-quick-close");
+const btnFloatingType  = $("btn-floating-type");
 
 const canvas           = $("viewport");
-const ctx              = canvas.getContext("2d");
+const ctx              = canvas.getContext("2d", { alpha: false, desynchronized: true });
+ctx.imageSmoothingQuality = "medium";
 const placeholder      = $("viewport-placeholder");
 const statusIndicator  = $("status-indicator");
 const statusText       = statusIndicator.querySelector(".status-text");
@@ -193,7 +199,7 @@ function handleServerMessage(msg) {
       if (appEl) appEl.classList.add("active");
       setStatus("connected", "Connected");
       startPingLoop();
-      urlInput.focus();
+      canvas.focus();
       break;
 
     // ── Latency Ping / Pong ──────────────────────────────────
@@ -322,14 +328,13 @@ async function handleBinaryFrame(buffer) {
     placeholder.classList.add("hidden");
 
     try {
-      const imageBytes = buffer.slice(1);
-      const blob = new Blob([imageBytes], { type: "image/jpeg" });
+      // Zero-copy Uint8Array view into ArrayBuffer (eliminates 2MB/s GC memory churn)
+      const blob = new Blob([new Uint8Array(buffer, 1)], { type: "image/jpeg" });
       const bitmap = await createImageBitmap(blob);
       ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
       bitmap.close();
 
       // Flow Control: Notify server that this frame is painted!
-      // This guarantees 0ms accumulated lag and strictly 1 frame in flight.
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(new Uint8Array([0x02]));
       }
@@ -381,12 +386,24 @@ function canvasCoords(event) {
 // Mouse click — send (x, y) to the server
 canvas.addEventListener("mousedown", (e) => {
   e.preventDefault();
+  if (document.activeElement === urlInput || document.activeElement === tokenInput || document.activeElement === quickTextInput) {
+    urlInput.blur();
+    if (tokenInput) tokenInput.blur();
+    if (quickTextInput) quickTextInput.blur();
+  }
+  canvas.focus();
   const { x, y } = canvasCoords(e);
   sendWs({ type: "mousedown", x, y, btn: e.button });
 });
 
 canvas.addEventListener("mouseup", (e) => {
   e.preventDefault();
+  if (document.activeElement === urlInput || document.activeElement === tokenInput || document.activeElement === quickTextInput) {
+    urlInput.blur();
+    if (tokenInput) tokenInput.blur();
+    if (quickTextInput) quickTextInput.blur();
+  }
+  canvas.focus();
   const { x, y } = canvasCoords(e);
   sendWs({ type: "mouseup", x, y, btn: e.button });
 });
@@ -464,6 +481,12 @@ function flushTouchScroll() {
 
 canvas.addEventListener("touchstart", (e) => {
   if (e.touches.length !== 1) return;
+  if (document.activeElement === urlInput || document.activeElement === tokenInput || document.activeElement === quickTextInput) {
+    urlInput.blur();
+    if (tokenInput) tokenInput.blur();
+    if (quickTextInput) quickTextInput.blur();
+  }
+  canvas.focus();
   const touch = e.touches[0];
   const coords = canvasCoords(touch);
   touchStartX = coords.x;
@@ -518,14 +541,19 @@ canvas.addEventListener("touchend", (e) => {
  * DOM key name (e.g. "a", "Enter", "Shift") to the server, which
  * calls page.keyboard.down(key) / page.keyboard.up(key).
  *
- * We only capture keyboard when the canvas/viewport area is focused
- * (not when the URL input is focused).
+ * Keystrokes are sent to the remote page UNLESS the user is explicitly
+ * typing in the top URL address bar, login token, or quick input bar.
  */
 document.addEventListener("keydown", (e) => {
-  // Don't intercept when typing in the URL bar
-  if (document.activeElement === urlInput || document.activeElement === tokenInput) return;
+  if (
+    document.activeElement === urlInput ||
+    document.activeElement === tokenInput ||
+    document.activeElement === quickTextInput
+  ) {
+    return;
+  }
 
-  // Prevent default for most keys to avoid browser shortcuts
+  // Prevent default for most keys to avoid browser shortcuts (e.g. Backspace going back)
   if (!isModifierOnly(e.key)) {
     e.preventDefault();
   }
@@ -534,7 +562,13 @@ document.addEventListener("keydown", (e) => {
 });
 
 document.addEventListener("keyup", (e) => {
-  if (document.activeElement === urlInput || document.activeElement === tokenInput) return;
+  if (
+    document.activeElement === urlInput ||
+    document.activeElement === tokenInput ||
+    document.activeElement === quickTextInput
+  ) {
+    return;
+  }
 
   e.preventDefault();
   sendWs({ type: "keyup", key: e.key });
@@ -551,6 +585,7 @@ if (urlForm) {
   urlForm.addEventListener("submit", (e) => {
     e.preventDefault();
     navigateTo(urlInput.value.trim());
+    urlInput.blur();
     canvas.focus();
   });
 }
@@ -560,6 +595,7 @@ urlInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
     e.preventDefault();
     navigateTo(urlInput.value.trim());
+    urlInput.blur();
     canvas.focus();
   }
 });
@@ -569,6 +605,7 @@ if (btnGo) {
   btnGo.addEventListener("click", (e) => {
     e.preventDefault();
     navigateTo(urlInput.value.trim());
+    urlInput.blur();
     canvas.focus();
   });
 }
@@ -630,14 +667,68 @@ if (deviceSelect) {
 }
 
 // ── Virtual Keyboard Bridge (Mobile / Touch Devices) ──────────
-if (btnKeyboard && virtualKeyboardBridge) {
-  btnKeyboard.addEventListener("click", () => {
-    virtualKeyboardBridge.focus();
-    virtualKeyboardBridge.click();
-    toast("⌨️ Touch keyboard focused — type to enter text", "info");
-  });
+// ── Quick Input Bar & Touch Keyboard Engine ───────────────────
+function toggleQuickInput(forceOpen = null) {
+  if (!quickInputBar) return;
+  const shouldOpen = forceOpen !== null ? forceOpen : quickInputBar.classList.contains("hidden");
+  if (shouldOpen) {
+    quickInputBar.classList.remove("hidden");
+    if (quickTextInput) {
+      quickTextInput.focus();
+      quickTextInput.select();
+    }
+  } else {
+    quickInputBar.classList.add("hidden");
+    canvas.focus();
+  }
+}
 
-  // Forward typed text to remote browser
+function submitQuickText() {
+  if (!quickTextInput) return;
+  const text = quickTextInput.value;
+  if (text) {
+    sendWs({ type: "keypress", text, submit: true });
+    quickTextInput.value = "";
+  }
+  toggleQuickInput(false);
+}
+
+if (btnKeyboard) {
+  btnKeyboard.addEventListener("click", () => {
+    toggleQuickInput();
+  });
+}
+
+if (btnFloatingType) {
+  btnFloatingType.addEventListener("click", () => {
+    toggleQuickInput(true);
+  });
+}
+
+if (btnQuickSend) {
+  btnQuickSend.addEventListener("click", submitQuickText);
+}
+
+if (btnQuickClose) {
+  btnQuickClose.addEventListener("click", () => {
+    toggleQuickInput(false);
+  });
+}
+
+if (quickTextInput) {
+  quickTextInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      submitQuickText();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      toggleQuickInput(false);
+    }
+  });
+}
+
+// Fallback micro-input bridge for direct mobile virtual keyboard keystrokes
+if (virtualKeyboardBridge) {
   virtualKeyboardBridge.addEventListener("input", (e) => {
     if (e.data) {
       sendWs({ type: "keypress", text: e.data });
@@ -645,7 +736,6 @@ if (btnKeyboard && virtualKeyboardBridge) {
     virtualKeyboardBridge.value = "";
   });
 
-  // Forward control keys (Enter, Backspace, Tab)
   virtualKeyboardBridge.addEventListener("keydown", (e) => {
     if (["Backspace", "Enter", "Tab", "Escape"].includes(e.key)) {
       sendWs({ type: "keydown", key: e.key });

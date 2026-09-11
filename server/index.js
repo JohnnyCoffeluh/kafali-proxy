@@ -50,8 +50,15 @@ function isTorHealthy() {
 
 const app = express();
 
-// Serve the frontend from public/
-app.use(express.static(path.join(__dirname, "..", "public"), { maxAge: "1h", etag: true }));
+// Serve the frontend from public/ (no-cache for instant frontend updates)
+app.use(express.static(path.join(__dirname, "..", "public"), {
+  etag: false,
+  setHeaders: (res) => {
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+  }
+}));
 
 // Health-check endpoint (protected)
 app.get("/health", requireAuth, (_req, res) => {
@@ -150,7 +157,7 @@ function startTor() {
     console.log(`[tor] Starting Tor proxy via ${torExe} (data: ${dataDir})...`);
 
     const torArgs = [
-      "--SocksPort", "9050 IsolateDestAddr IsolateDestPort KeepAliveIsolateSOCKSAuth OptimisticData",
+      "--SocksPort", "9050 KeepAliveIsolateSOCKSAuth OptimisticData",
       "--DNSPort", "9053",
       "--ControlPort", "9051",
       "--CookieAuthentication", "1",
@@ -162,6 +169,9 @@ function startTor() {
       "--NewCircuitPeriod", "1800",
       "--MaxCircuitDirtiness", "1800",
       "--ClientOnly", "1",
+      "--MaxMemInQueues", "512 MBytes",
+      "--BandwidthRate", "100 MBytes",
+      "--BandwidthBurst", "200 MBytes",
       "--DataDirectory", dataDir,
     ];
 

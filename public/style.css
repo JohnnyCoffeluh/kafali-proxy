@@ -169,16 +169,21 @@ html, body {
 
 .btn-full { width: 100%; }
 
-/* ── Virtual Keyboard Bridge (Off-Screen) ─────────────────── */
+/* ── Virtual Keyboard Bridge (On-Screen Micro Element for Mobile OS Focus) ── */
 
 .virtual-keyboard-bridge {
-  position: absolute;
-  left: -9999px;
-  top: -9999px;
+  position: fixed;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
   width: 1px;
   height: 1px;
-  opacity: 0;
-  pointer-events: none;
+  opacity: 0.01;
+  border: none;
+  background: transparent;
+  color: transparent;
+  pointer-events: auto;
+  z-index: 10;
 }
 
 /* ── Main App Layout ───────────────────────────────────────── */
@@ -554,6 +559,134 @@ html, body {
   touch-action: none; /* Prevents browser scroll/pinch so touch events map directly to remote page */
   user-select: none;
   -webkit-user-select: none;
+  outline: none;
+}
+
+#viewport:focus {
+  outline: none;
+}
+
+/* Floating Type Trigger Button */
+.btn-floating-type {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  background: rgba(17, 24, 39, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(168, 85, 247, 0.4);
+  border-radius: 24px;
+  color: #f1f5f9;
+  font-family: 'Inter', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+  z-index: 50;
+  transition: all var(--transition);
+  touch-action: manipulation;
+}
+
+.btn-floating-type:hover {
+  background: rgba(99, 102, 241, 0.3);
+  border-color: var(--accent);
+  transform: translateY(-2px);
+}
+
+.btn-floating-type:active {
+  transform: scale(0.95);
+}
+
+/* Quick Input Bar (Direct page typing & mobile speech/paste) */
+.quick-input-bar {
+  position: fixed;
+  bottom: 36px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 92%;
+  max-width: 600px;
+  background: rgba(17, 24, 39, 0.95);
+  backdrop-filter: blur(24px) saturate(1.4);
+  -webkit-backdrop-filter: blur(24px) saturate(1.4);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.7), 0 0 20px var(--accent-glow);
+  padding: 8px 12px;
+  z-index: 200;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.quick-input-bar.hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%) translateY(20px) scale(0.96);
+}
+
+.quick-input-inner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.quick-input-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+#quick-text-input {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: 'Inter', sans-serif;
+  font-size: 14px;
+  padding: 8px 12px;
+  outline: none;
+  transition: border-color var(--transition);
+}
+
+#quick-text-input:focus {
+  border-color: var(--accent);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.btn-quick-action {
+  background: linear-gradient(135deg, var(--accent), #a855f7);
+  color: white;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 8px 14px;
+  font-family: 'Inter', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all var(--transition);
+}
+
+.btn-quick-action:hover {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+}
+
+.btn-quick-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 14px;
+  padding: 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color var(--transition);
+}
+
+.btn-quick-close:hover {
+  color: var(--text-primary);
 }
 
 /* Loading / placeholder state */

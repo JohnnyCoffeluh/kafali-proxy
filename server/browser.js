@@ -34,17 +34,45 @@ const TOR_PROXY = "socks5://127.0.0.1:9050";
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; rv:128.0) Gecko/20100101 Firefox/128.0";
 
+const fs = require("fs");
+
 /**
- * Launch the shared Chromium instance.
+ * Locate official Google Chrome or Edge on the system for proprietary
+ * video codec support (H.264, AAC, MP4, AV1, VP9) and hardware acceleration.
+ */
+function getBrowserExecutablePath() {
+  if (process.env.PUPPETEER_EXECUTABLE_PATH) return process.env.PUPPETEER_EXECUTABLE_PATH;
+  const candidates = [
+    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+    "/usr/bin/google-chrome",
+    "/usr/bin/chromium",
+  ];
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)) return p;
+    } catch {}
+  }
+  return undefined;
+}
+
+/**
+ * Launch the shared Chromium/Chrome instance.
  * Called once when the server boots.
  */
 async function launch() {
   if (browser) return browser;
 
+  const execPath = getBrowserExecutablePath();
+  if (execPath) {
+    console.log("[browser] Using high-performance browser binary with full video codecs: %s", execPath);
+  }
+
   browser = await puppeteer.launch({
     headless: true,
     ignoreHTTPSErrors: true,
-    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+    executablePath: execPath,
     args: [
       // ── Tor proxy ─────────────────────────────────────────────
       // Route ALL traffic (HTTP, HTTPS, WS) through Tor SOCKS5
@@ -55,12 +83,11 @@ async function launch() {
       "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1",
       "--proxy-bypass-list=<-loopback>",
 
-      // ── Security ─────────────────────────────────────────────
+      // ── Security & Sandboxing ────────────────────────────────
       "--no-sandbox",
       "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
       "--disable-extensions",
-      "--disable-background-networking",
       "--disable-sync",
       "--disable-translate",
       "--disable-default-apps",
@@ -78,19 +105,21 @@ async function launch() {
       "--enforce-webrtc-ip-permission-check",
       "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
 
-      // Disable WebGL — prevents GPU-based fingerprinting
-      "--disable-webgl",
-      "--disable-webgl2",
-
-      // ── Hardware Acceleration & Zero-Latency Rendering ─────────
+      // ── Hardware Acceleration & Full Video Streaming Pipeline ──
+      "--use-gl=angle",
+      "--use-angle=d3d11",
       "--enable-gpu-rasterization",
       "--enable-zero-copy",
       "--enable-accelerated-2d-canvas",
-      "--disable-smooth-scrolling",         // Crucial: makes scroll instant & eliminates 15 intermediate frames
+      "--enable-accelerated-video-decode",  // Hardware video decoding for smooth playback
+      "--ignore-gpu-blocklist",             // Ensures GPU acceleration stays active
+      "--autoplay-policy=no-user-gesture-required", // Allows video to play smoothly when clicked
+      "--disable-smooth-scrolling",         // Makes scroll instant & eliminates 15 intermediate frames
       "--disable-ipc-flooding-protection",  // Allows ultra-fast Puppeteer CDP communication
       "--disable-renderer-backgrounding",
       "--disable-backgrounding-occluded-windows",
-      "--disk-cache-size=104857600",        // 100MB disk cache for fast page assets
+      "--disk-cache-size=524288000",        // 500MB disk cache for instant page & asset loading
+      "--media-cache-size=268435456",       // 256MB dedicated media buffer cache for streaming video chunks
 
       // ── Sensors & Privacy Protection ─────────────────────────
       "--disable-notifications",
@@ -104,11 +133,10 @@ async function launch() {
       "--disable-client-side-phishing-detection",
       "--disable-component-update",
       "--disable-domain-reliability",
-      "--disable-features=AudioServiceOutOfProcess,IsolateOrigins,site-per-process,Translate,OptimizationHints,MediaRouter,DialMediaRouteProvider",
-      "--enable-features=CanvasOopRasterization,NetworkService,NetworkServiceInProcess",
+      "--disable-features=OptimizationHints,Translate,MediaRouter,DialMediaRouteProvider",
+      "--enable-features=CanvasOopRasterization,NetworkService,NetworkServiceInProcess,VaapiVideoDecoder,PlatformHEVCDecoderSupport,AudioServiceOutOfProcess",
     ],
   });
-
 
   console.log("[browser] Chromium launched (PID %d)", browser.process()?.pid);
   console.log("[browser] Traffic routed through Tor at %s", TOR_PROXY);
@@ -147,10 +175,38 @@ async function createSession() {
     "Accept-Language": "en-US,en;q=0.5",
   });
 
-  // Block WebRTC IP leak via CDP
+  // ── Block trackers natively via CDP (zero overhead, zero video chunk pausing) ──
   try {
     const cdp = await page.createCDPSession();
     await cdp.send("Network.enable");
+    await cdp.send("Network.setBlockedURLs", {
+      urls: [
+        "*google-analytics.com*",
+        "*googletagmanager.com*",
+        "*doubleclick.net*",
+        "*googlesyndication.com*",
+        "*googleadservices.com*",
+        "*adservice.google*",
+        "*facebook.net*",
+        "*connect.facebook.net*",
+        "*scorecardresearch.com*",
+        "*criteo.com*",
+        "*adnxs.com*",
+        "*outbrain.com*",
+        "*taboola.com*",
+        "*amazon-adsystem.com*",
+        "*hotjar.com*",
+        "*clarity.ms*",
+        "*segment.io*",
+        "*mixpanel.com*",
+        "*adroll.com*",
+        "*rubiconproject.com*",
+        "*pubmatic.com*",
+        "*openx.net*",
+        "*sentry.io*",
+        "*datadoghq.com*"
+      ]
+    });
     // Spoof the WebRTC IP handling policy
     await cdp.send("Emulation.setUserAgentOverride", {
       userAgent: USER_AGENT,
@@ -159,8 +215,17 @@ async function createSession() {
     await cdp.detach();
   } catch { /* best effort */ }
 
-  // Inject anti-fingerprinting scripts before any page JS runs
+  // Inject anti-fingerprinting and media acceleration scripts before any page JS runs
   await page.evaluateOnNewDocument(() => {
+    // ── Pre-configure YouTube & HTML5 Video Players ─────────────
+    try {
+      localStorage.setItem("yt-player-quality", JSON.stringify({
+        data: "480p",
+        expiration: Date.now() + 86400000,
+        creation: Date.now()
+      }));
+    } catch {}
+
     // ── Override WebRTC to prevent IP leaks ─────────────────────
     // Replace RTCPeerConnection so no STUN/TURN requests can reveal IP
     Object.defineProperty(window, "RTCPeerConnection", {
@@ -190,7 +255,7 @@ async function createSession() {
     };
 
     // ── Spoof navigator properties ──────────────────────────────
-    Object.defineProperty(navigator, "hardwareConcurrency", { get: () => 4 });
+    Object.defineProperty(navigator, "hardwareConcurrency", { get: () => 8 });
     Object.defineProperty(navigator, "deviceMemory",        { get: () => 8 });
     Object.defineProperty(navigator, "platform",            { get: () => "Win32" });
 
@@ -209,59 +274,42 @@ async function createSession() {
     navigator.geolocation.getCurrentPosition = (s, e) =>
       e?.({ code: 1, message: "User denied Geolocation" });
     navigator.geolocation.watchPosition = () => -1;
-  });
 
-  // Disable JavaScript dialog boxes (alert, confirm, prompt)
-  // ── Network Turbo: Block heavy telemetry, ad networks, fonts & media ───
-  // Tor is bandwidth-constrained. Blocking unnecessary bloated subresources
-  // reduces page byte weight by ~70% and makes pages load in 1-2 seconds!
-  try {
-    await page.setRequestInterception(true);
-    page.on("request", (req) => {
-      const type = req.resourceType();
-      // Block autoplay video/audio streams that saturate Tor bandwidth
-      if (type === "media") {
-        return req.abort();
-      }
-      // Block web fonts: forces instant fallback to clean system fonts (0ms font delay!)
-      if (type === "font") {
-        return req.abort();
-      }
+    // ── Video & Media Playback Optimizer ─────────────────────────
+    const configureMedia = (el) => {
+      if (!el) return;
+      el.playsInline = true;
+      el.setAttribute("playsinline", "");
+      el.setAttribute("webkit-playsinline", "");
+      if (el.preload === "none") el.preload = "auto";
+    };
 
-      const url = req.url().toLowerCase();
-      if (
-        url.includes("google-analytics.com") ||
-        url.includes("googletagmanager.com") ||
-        url.includes("doubleclick.net") ||
-        url.includes("googlesyndication.com") ||
-        url.includes("googleadservices.com") ||
-        url.includes("facebook.net") ||
-        url.includes("connect.facebook.net") ||
-        url.includes("scorecardresearch.com") ||
-        url.includes("criteo.com") ||
-        url.includes("adnxs.com") ||
-        url.includes("outbrain.com") ||
-        url.includes("taboola.com") ||
-        url.includes("amazon-adsystem.com") ||
-        url.includes("adservice.google") ||
-        url.includes("hotjar.com") ||
-        url.includes("clarity.ms") ||
-        url.includes("segment.io") ||
-        url.includes("mixpanel.com") ||
-        url.includes("adroll.com") ||
-        url.includes("rubiconproject.com") ||
-        url.includes("pubmatic.com") ||
-        url.includes("openx.net") ||
-        url.includes("sentry.io") ||
-        url.includes("datadoghq.com")
-      ) {
-        return req.abort();
-      }
-      req.continue();
+    window.addEventListener("DOMContentLoaded", () => {
+      document.querySelectorAll("video, audio").forEach(configureMedia);
+
+      // Watch for dynamically inserted video/audio elements (SPA players)
+      const observer = new MutationObserver((mutations) => {
+        for (const m of mutations) {
+          for (const node of m.addedNodes) {
+            if (node.nodeName === "VIDEO" || node.nodeName === "AUDIO") {
+              configureMedia(node);
+            } else if (node.querySelectorAll) {
+              node.querySelectorAll("video, audio").forEach(configureMedia);
+            }
+          }
+        }
+      });
+      observer.observe(document.documentElement, { childList: true, subtree: true });
+
+      // Keep YouTube player tuned to smooth streaming bitrate
+      setInterval(() => {
+        const yt = document.getElementById("movie_player");
+        if (yt && typeof yt.setPlaybackQuality === "function") {
+          try { yt.setPlaybackQuality("medium"); } catch {}
+        }
+      }, 3000);
     });
-  } catch (err) {
-    console.warn("[browser] Request interception note:", err.message);
-  }
+  });
 
   return { context, page };
 }
