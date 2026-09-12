@@ -6,7 +6,8 @@
 
 services:
   - type: web
-    name: rbi-proxy
+    name: kafali-proxy
+    branch: master
     runtime: docker
     plan: free
     region: oregon
