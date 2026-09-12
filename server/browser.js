@@ -69,6 +69,7 @@ async function launch() {
     console.log("[browser] Using high-performance browser binary with full video codecs: %s", execPath);
   }
 
+  const isWin = process.platform === "win32";
   browser = await puppeteer.launch({
     headless: true,
     ignoreHTTPSErrors: true,
@@ -105,26 +106,37 @@ async function launch() {
       "--enforce-webrtc-ip-permission-check",
       "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
 
-      // ── Hardware Acceleration & Full Video Streaming Pipeline ──
-      "--use-gl=angle",
-      "--use-angle=d3d11",
-      "--enable-gpu-rasterization",
-      "--enable-zero-copy",
-      "--enable-accelerated-2d-canvas",
-      "--enable-accelerated-video-decode",  // Hardware video decoding for smooth playback
-      "--ignore-gpu-blocklist",             // Ensures GPU acceleration stays active
-      "--autoplay-policy=no-user-gesture-required", // Allows video to play smoothly when clicked
-      "--disable-smooth-scrolling",         // Makes scroll instant & eliminates 15 intermediate frames
-      "--disable-ipc-flooding-protection",  // Allows ultra-fast Puppeteer CDP communication
+      // ── Hardware Acceleration & Media Streaming Pipeline ──────
+      ...(isWin
+        ? [
+            "--use-gl=angle",
+            "--use-angle=d3d11",
+            "--enable-gpu-rasterization",
+            "--enable-zero-copy",
+            "--enable-accelerated-2d-canvas",
+            "--enable-accelerated-video-decode",
+            "--ignore-gpu-blocklist",
+            "--disk-cache-size=524288000",
+            "--media-cache-size=268435456",
+          ]
+        : [
+            "--disable-gpu",
+            "--disable-software-rasterizer",
+            "--renderer-process-limit=1",
+            "--js-flags=--max-old-space-size=160",
+            "--disk-cache-size=67108864",
+            "--media-cache-size=33554432",
+          ]),
+      "--autoplay-policy=no-user-gesture-required",
+      "--disable-smooth-scrolling",
+      "--disable-ipc-flooding-protection",
       "--disable-renderer-backgrounding",
       "--disable-backgrounding-occluded-windows",
-      "--disk-cache-size=524288000",        // 500MB disk cache for instant page & asset loading
-      "--media-cache-size=268435456",       // 256MB dedicated media buffer cache for streaming video chunks
 
       // ── Sensors & Privacy Protection ─────────────────────────
       "--disable-notifications",
       "--disable-geolocation",
-      "--disable-media-stream",             // Block camera/microphone
+      "--disable-media-stream",
       "--disable-speech-api",
       "--disable-background-timer-throttling",
 
@@ -134,7 +146,7 @@ async function launch() {
       "--disable-component-update",
       "--disable-domain-reliability",
       "--disable-features=OptimizationHints,Translate,MediaRouter,DialMediaRouteProvider",
-      "--enable-features=CanvasOopRasterization,NetworkService,NetworkServiceInProcess,VaapiVideoDecoder,PlatformHEVCDecoderSupport,AudioServiceOutOfProcess",
+      "--enable-features=CanvasOopRasterization,NetworkService,NetworkServiceInProcess",
     ],
   });
 
